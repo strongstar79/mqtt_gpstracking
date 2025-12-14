@@ -32,12 +32,30 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 def parse_log_file(filename):
     """
-    로그 파일을 파싱하여 GPS 좌표 데이터 추출
+    로그 파일을 파싱하여 GPS 좌표 데이터 추출 및 pending 메시지 감지
     """
     gps_data = []
+    pending_points = []
+    last_gps_point = None
     
     with open(filename, 'r', encoding='utf-8') as f:
         for line in f:
+            # pending 메시지 감지
+            if 'mqtt pending' in line.lower():
+                pending_timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+                pending_timestamp = pending_timestamp_match.group(1) if pending_timestamp_match else ''
+                
+                # 직전 GPS 좌표가 있으면 pending 지점으로 저장
+                if last_gps_point:
+                    pending_points.append({
+                        'lat': last_gps_point['lat'],
+                        'lon': last_gps_point['lon'],
+                        'timestamp_before': last_gps_point['timestamp'],
+                        'pending_timestamp': pending_timestamp,
+                        'timestamp_after': None  # 나중에 채워짐
+                    })
+                continue
+            
             # 딕셔너리 부분 추출
             match = re.search(r"\{'TIMESTAMP':.*?\}", line)
             if match:
@@ -56,7 +74,7 @@ def parse_log_file(filename):
                         
                         # 0,0 좌표 제외
                         if lat != 0.0 or lon != 0.0:
-                            gps_data.append({
+                            gps_point = {
                                 'timestamp': timestamp,
                                 'lat': lat,
                                 'lon': lon,
@@ -65,14 +83,56 @@ def parse_log_file(filename):
                                 'qual': int(data.get('QUAL', 0)),
                                 'equip_type': data.get('EQUIP_TYPE', ''),
                                 'equip_id': data.get('EQUIP_ID', '')
-                            })
+                            }
+                            gps_data.append(gps_point)
+                            last_gps_point = gps_point
+                            
+                            # pending 지점의 직후 시간 업데이트 (아직 업데이트되지 않은 첫 번째 pending)
+                            for pending_point in pending_points:
+                                if pending_point['timestamp_after'] is None:
+                                    pending_point['timestamp_after'] = timestamp
+                                    break
                 except:
                     continue
     
     # 시간순으로 정렬
     gps_data.sort(key=lambda x: x['timestamp'])
     
-    return gps_data
+    # pending 지점의 시간 간격 계산
+    for pending_point in pending_points:
+        if pending_point['timestamp_before'] and pending_point['timestamp_after']:
+            try:
+                time_format = '%Y-%m-%d %H:%M:%S'
+                before_time = datetime.strptime(pending_point['timestamp_before'], time_format)
+                after_time = datetime.strptime(pending_point['timestamp_after'], time_format)
+                duration = after_time - before_time
+                
+                # 초 단위로 변환
+                total_seconds = int(duration.total_seconds())
+                
+                # 시간, 분, 초로 변환
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                
+                # 포맷팅
+                if hours > 0:
+                    duration_str = f"{hours}시간 {minutes}분 {seconds}초"
+                elif minutes > 0:
+                    duration_str = f"{minutes}분 {seconds}초"
+                else:
+                    duration_str = f"{seconds}초"
+                
+                pending_point['duration'] = duration_str
+                pending_point['duration_seconds'] = total_seconds
+            except:
+                pending_point['duration'] = 'N/A'
+                pending_point['duration_seconds'] = 0
+        else:
+            pending_point['duration'] = 'N/A'
+            pending_point['duration_seconds'] = 0
+    
+    return gps_data, pending_points
 
 def filter_by_distance(gps_data, min_distance=5.0):
     """
@@ -134,7 +194,7 @@ def get_track():
             return jsonify({'error': '파일을 찾을 수 없습니다.'}), 404
     
     # 로그 파일 파싱
-    gps_data = parse_log_file(log_file)
+    gps_data, pending_points = parse_log_file(log_file)
     
     if not gps_data:
         return jsonify({'error': 'GPS 데이터를 찾을 수 없습니다.'}), 404
@@ -151,7 +211,8 @@ def get_track():
         'total_points': len(filtered_data),
         'original_points': len(gps_data),
         'equip_type': equip_type,
-        'equip_id': equip_id
+        'equip_id': equip_id,
+        'pending_points': pending_points
     })
 
 @app.route('/api/files')

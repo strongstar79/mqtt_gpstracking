@@ -405,6 +405,32 @@
                         markers.push(marker);
                     }
                     
+                    // Pending 지점 마커 (X 아이콘)
+                    if (data.pending_points && data.pending_points.length > 0) {
+                        data.pending_points.forEach((pending, index) => {
+                            const pendingIcon = L.divIcon({
+                                className: 'pending-marker',
+                                html: '<div style="background: #f44336; width: 30px; height: 30px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 18px;">✕</div>',
+                                iconSize: [30, 30],
+                                iconAnchor: [15, 15]
+                            });
+                            
+                            const pendingMarker = L.marker([pending.lat, pending.lon], { icon: pendingIcon }).addTo(map);
+                            
+                            let pendingPopup = '<b>⚠️ MQTT Pending 지점 #' + (index + 1) + '</b><br>';
+                            pendingPopup += '좌표: ' + pending.lat.toFixed(6) + ', ' + pending.lon.toFixed(6) + '<br>';
+                            pendingPopup += '<hr style="margin: 5px 0;">';
+                            pendingPopup += '<b>Pending 전:</b> ' + (pending.timestamp_before || 'N/A') + '<br>';
+                            pendingPopup += '<b>Pending 발생:</b> ' + (pending.pending_timestamp || 'N/A') + '<br>';
+                            pendingPopup += '<b>Pending 후:</b> ' + (pending.timestamp_after || 'N/A') + '<br>';
+                            pendingPopup += '<hr style="margin: 5px 0;">';
+                            pendingPopup += '<b style="color: #f44336;">Pending 유지 시간:</b> ' + (pending.duration || 'N/A');
+                            
+                            pendingMarker.bindPopup(pendingPopup);
+                            markers.push(pendingMarker);
+                        });
+                    }
+                    
                     // 지도 범위 조정
                     map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
                     
